@@ -1,0 +1,53 @@
+#o2-nesbit.4
+Author: Nick Nesbit
+Operating Systems Project 4
+Process Scheduling and OS Simulator
+
+git repository: https://github.com/misterNez/o2-nesbit.4
+
+For help: ./oss -h
+
+To run: ./oss (default values set)
+
+Options:
+        -h		Display the help menu       
+
+        -l [filename]   Set the name of the produced log file (default: nesbitP3.log)
+
+        -t [integer]    Set the length of program timeout in seconds (default: 20)
+     
+     *Example: ./master -l newfile.log -t 30
+
+     
+     *Press Ctrl-C during execution to clean up resources and terminate all processes.
+
+ 
+Basic function:
+     oss.c:
+        -Master file. Randomly spawns child processes and waits to receive messages from them.
+        -Spawns new child processes as old ones terminate.
+        -Messages are stored in a message queue, which is also used to enforce mutual exclusion
+        -Messages consist of a simulated clock, which is handled by a chunk of shared memory.
+        -Maintains process control table, which is handled by a chunk of shared memory.
+        -Controls concurrency using process queues.
+
+     user.c:
+        -User process file. Can either be a real-time process or noraml user process.
+        -Has a small probability to terminate.
+        -Can either be blocked or use up entire time slice at once.
+        -Process is repeated until the total work is equal to a randomly generated duration period.
+        -Sends message to master process and terminates after work load is complete.
+
+     message.h:
+        -Defines the data structure for the message queue.
+
+     timer.h:
+        -Defines the data structure for the shared memory timer.
+
+     pct.h
+        -Define the data structure for the process control table.
+
+     Makefile:
+        make: Builds two executables: oss, user
+        make clean: Removes object files, log files, and execuatable files.
+
