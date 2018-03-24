@@ -26,10 +26,12 @@ Basic function:
      oss.c:
         -Master file. Randomly spawns child processes and waits to receive messages from them.
         -Spawns new child processes as old ones terminate.
+        -Max number of processes allowed at one time is 18.
         -Messages are stored in a message queue, which is also used to enforce mutual exclusion
         -Messages consist of a simulated clock, which is handled by a chunk of shared memory.
         -Maintains process control table, which is handled by a chunk of shared memory.
         -Controls concurrency using process queues.
+        -Terminates after 3 real life seconds or after 100 children have been spawned.
 
      user.c:
         -User process file. Can either be a real-time process or noraml user process.
@@ -50,4 +52,7 @@ Basic function:
      Makefile:
         make: Builds two executables: oss, user
         make clean: Removes object files, log files, and execuatable files.
+
+Difficulties:
+      -Blocked queue is not implemented.
 

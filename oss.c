@@ -145,7 +145,7 @@ int main(int argc, char* argv[]) {
    FILE* log;	      //File variable
 
    //Constant time constraints
-   const int maxTimeBetweenNewProcsNS = 500000000;
+   const int maxTimeBetweenNewProcsNS = 1000;
    const int maxTimeBetweenNewProcsSecs = 1;
 
    printf("%s: Computing... log filename: %s, termination time: %d\n", argv[0], filename, termTime);
@@ -182,6 +182,9 @@ int main(int argc, char* argv[]) {
          pid = fork();
          total++;
          count++;
+
+         if (total == 100)
+            term = 3;
 
          //Switch PID
          switch(pid) {
@@ -310,13 +313,14 @@ int main(int argc, char* argv[]) {
 
          //If done
          if (pct[i].done == 1) {
+            count--;
+            printf("%s: Process %ld finished. %d child processes running.\n", argv[0], pct[i].pid, count);
             waitpid(pct[i].pid, &status, 0);
             snprintf(message.str, sizeof(message), "OSS: Process with PID %ld has finished at time %d.%d after running %d nanoseconds\n",
                                                                     pct[i].pid, timer->secs, timer->nanos, pct[i].cpu_time);
             fprintf(log, message.str);
             roundRobin[0] = 0;
             pct[i].ready = -1;
-            count--;
          }
          //Else if blocked
          else if ( pct[i].ready = 0 ) {
@@ -370,13 +374,14 @@ int main(int argc, char* argv[]) {
       
          //If done
          if (pct[i].done == 1) {
+            count--;
+            printf("%s: Process %ld finished. %d child processes running.\n", argv[0], pct[i].pid, count);
             waitpid(pct[i].pid, &status, 0);
             snprintf(message.str, sizeof(message), "OSS: Process with PID %ld has finished at time %d.%d after running %d nanoseconds\n",
                                                                     pct[i].pid, timer->secs, timer->nanos, pct[i].cpu_time);
             fprintf(log, message.str);
             feedbck_1[0] = 0;
             pct[i].ready = -1;
-            count--;
          }
          //Else if blocked
          else if ( pct[i].ready = 0 ) {
@@ -436,13 +441,14 @@ int main(int argc, char* argv[]) {
 
          //If done
          if (pct[i].done == 1) {
+            count--;
+            printf("%s: Process %ld finished. %d child processes running.\n", argv[0], pct[i].pid, count);
             waitpid(pct[i].pid, &status, 0);
             snprintf(message.str, sizeof(message), "OSS: Process with PID %ld has finished at time %d.%d after running %d nanoseconds\n",
                                                                     pct[i].pid, timer->secs, timer->nanos, pct[i].cpu_time);
             fprintf(log, message.str);
             feedbck_2[0] = 0;
             pct[i].ready = -1;
-            count--;
          }
          //Else if blocked
          else if ( pct[i].ready = 0 ) {
@@ -502,13 +508,14 @@ int main(int argc, char* argv[]) {
  
          //If done
          if (pct[i].done == 1) {
+            count--;
             waitpid(pct[i].pid, &status, 0);
+            printf("%s: Process %ld finished. %d child processes running.\n", argv[0], pct[i].pid, count);
             snprintf(message.str, sizeof(message), "OSS: Process with PID %ld has finished at time %d.%d after running %d nanoseconds\n",
                                                                     pct[i].pid, timer->secs, timer->nanos, pct[i].cpu_time);
             fprintf(log, message.str);
             feedbck_3[0] = 0;
             pct[i].ready = -1;
-            count--;
          }
          //Else if blocked
          else if ( pct[i].ready = 0 ) {
