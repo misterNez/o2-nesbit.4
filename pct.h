@@ -8,12 +8,15 @@ typedef struct
    long pid;
    int priority;
    int cpu_time;
-   int total_time;
+   int total_sec;
+   int total_nano;
    int burst_time;
-   int startSec;
-   int startNS;
-   int launched;
-   int used;
+   int running;
+   int ready;
+   int duration;
+   int done;
+   int r;
+   int s;
 } PCB;
 
 #endif

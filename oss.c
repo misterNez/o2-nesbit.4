@@ -20,7 +20,22 @@
 volatile sig_atomic_t term = 0;
 
 //Global variable for max processes
-int maxProc = 18;
+const int maxProc = 18;
+
+//Global arrays for process queues
+long roundRobin[18];
+long feedbck_1[18];
+long feedbck_2[18];
+long feedbck_3[18];
+long blocked[18];
+
+//Array to hold time slices
+int quantum[4] = {2000000, 4000000, 8000000, 16000000};
+
+//Global utility variables. Used for for loops.
+int i;
+int j;
+int k;
 
 //Function prototypes
 void display_help(char* prog);
@@ -52,9 +67,17 @@ int main(int argc, char* argv[]) {
    key = ftok("/tmp", 50);
    int shmpid = shmget(key, maxProc * sizeof(PCB), IPC_CREAT | 0666);
    pct = shmat(shmpid, NULL, 0);
-   int i;
    for (i = 0; i < maxProc; i++)
-      pct[i].used = 0;
+      pct[i].ready = -1;
+
+   //Initialize process queues
+   for ( i = 0; i < maxProc; i++ ) {
+      roundRobin[i] = 0;
+      feedbck_1[i] = 0;
+      feedbck_2[i] = 0;
+      feedbck_3[i] = 0;
+      blocked[i] = 0;
+   }
  
    //Message queue
    struct msg_struc message;
@@ -70,7 +93,7 @@ int main(int argc, char* argv[]) {
    extern int optind, optopt, opterr;
 
    //Default utility variables
-   char* filename = "nesbitP3.log";
+   char* filename = "nesbitP4.log";
    int termTime = 3;
 
    //Check for command line arguments
@@ -107,6 +130,7 @@ int main(int argc, char* argv[]) {
 
    //Seed random number generator
    srand(getpid());
+   unsigned int ran;
 
    //Variables to store time until launching next process
    unsigned int secs;
@@ -123,60 +147,60 @@ int main(int argc, char* argv[]) {
    FILE* log;	      //File variable
 
    //Constant time constraints
-   const int maxTimeBetweenNewProcsNS = 500000000;
+   const int maxTimeBetweenNewProcsNS = 700000000;
    const int maxTimeBetweenNewProcsSecs = 1;
 
    printf("%s: Computing... log filename: %s, termination time: %d\n", argv[0], filename, termTime);
 
+   log = fopen(filename, "w");
+
    //Main master loop
-   while ( (total < 100) && (term == 0) ) {
+   while ( term == 0 || count > 0) {
+
+      //Generate random time to spawn process
+      secs = rand() % maxTimeBetweenNewProcsSecs;
+      nanos = rand() % maxTimeBetweenNewProcsNS;
+      //nextSec = secs + timer->secs;
+      //nextNS = nanos + timer->nanos;
+      //Adjust as needed
+      timer->secs += secs;
+      timer->nanos += nanos; 
+      while (timer->nanos > 1000000000) {
+         timer->nanos -= 1000000000;
+         timer->secs++;
+      }
 
       //If resources allow another process
-      if (count < 18) {
-         secs = rand() % maxTimeBetweenNewProcsSecs;
-         nanos = rand() % maxTimeBetweenNewProcsNS;
-         nextSec = secs + timer->secs;
-         nextNS = nanos + timer->nanos;
-         while (nextNS > 1000000000) {
-            nextNS -= 1000000000;
-            nextSec++;
-         }
+      if ( count < 18 && total < 100 ) {
 
-         //Fork a new child and increment total
+         //Find open process control block
          for (i = 0; i < maxProc; i++) {
-            if (pct[i].used == 0) {
+            if (pct[i].ready == -1) {
                index = i;
                break;
             }
          }
                 
+         //Fork and increment total/count
          pid = fork();
          total++;
          count++;
 
+         //Switch PID
          switch(pid) {
 
             //Fork error
             case -1:
                fprintf(stderr, "%s: Error: Failed to fork slave process\n", argv[0]);
                count--;
-               pct[index].used = 0;
                break;
 
             //Child process
             case 0:
                //Start of a critical section
-               msgrcv(msgid, &message, sizeof(message), (long)getpid(), 0);
-               pct[index].launched = 1;
+               msgrcv(msgid, &message, sizeof(message), 1, 0);
 
-               //Print message to file
-               snprintf(message.str, sizeof(message), "Master: Creating new child pid %ld at my time %d.%d\n",
-                                                                    (long)getpid(), timer->secs, timer->nanos);
-               log = fopen(filename, "a");
-               fprintf(log, message.str);
-               fclose(log);
-
-               //printf("%s: Attempting to exec child process %ld\n", argv[0], (long)getpid());
+               printf("%s: Attempting to exec child process %ld\n", argv[0], (long)getpid());
 
                //Exit critical section
                message.type = 2;
@@ -194,115 +218,269 @@ int main(int argc, char* argv[]) {
 
             //Parent process
             default:
-                //Initialize the process block
-                pct[index].pid = (long)pid;
-         	pct[index].priority = 0;
-                pct[index].cpu_time = 0;
-                pct[index].total_time = 0;
-                pct[index].burst_time = 0;
-                pct[index].startSec = nextSec;
-                pct[index].startNS = nextNS;
-                pct[index].launched = 0;
-                pct[index].used = 1;
+               //Initialize the process block
+               pct[index].pid = (long)pid;
 
-               for (i = 0; i < maxProc; i++) {
-                  if (pct[i].used == 1) {
-                     if (timer->secs >= pct[i].startSec && timer->nanos >= pct[i].startNS && pct[i].launched == 0) {
-                        message.type = (long)pct[i].pid;
-                        msgsnd(msgid, &message, sizeof(message), 0);
-                        msgrcv(msgid, &message, sizeof(message), 2, 0);
-                     }
-                  }
-               }
-
-               //Enter critical section if message received from user process
-               if ( (msgrcv(msgid, &message, sizeof(message), (long)getpid(), IPC_NOWAIT) != -1) ) {
-                  //Write message to file
-                  log = fopen(filename, "a");
-                  fprintf(log, message.str);
-                  fclose(log);
-                  pid = wait(&status);
-                  for (i = 0; i < maxProc; i++) {
-                     if ((long)pct[i].pid == (long)pid) {
-                        pct[i].used = 0;
-                        count--;
-                        //printf("%s: Process %ld finished(1). %d child processes running.\n", argv[0], (long)pid, count);
+               //Determine class and initial time slice
+               ran = rand()%99 + 1;
+               //Real-time:
+               if ( ran < 3 ) {
+                  pct[index].priority = 0;
+                  for ( i = 0; i < maxProc; i++) {
+                     if (roundRobin[i] == 0) {
+                        roundRobin[i] = pct[index].pid;
+                        pct[index].burst_time = quantum[0];
                         break;
                      }
                   }
                }
+               //Normal:
+               else {
+                  pct[index].priority = 1;
+                  for ( i = 0; i < maxProc; i++) {
+                     if (feedbck_1[i] == 0) {
+                        feedbck_1[i] = pct[index].pid;
+                        pct[index].burst_time = quantum[1];
+                        break;
+                     }
+                  }
+               }   
+ 
+               //Generate random duration
+               pct[index].duration = rand()%98999998 + 1000000;
 
-               //Increment the timer 100 nanos and adjust
-               timer->nanos += 100;
-               while (timer->nanos >= 1000000000) {
-                  timer->nanos -= 1000000000;
-                  timer->secs++;
-               }
-                  
+               //Initialize time members
+               pct[index].cpu_time = 0;
+               pct[index].total_sec = 0;
+               pct[index].total_nano = 0;
+
+               //Initialize the running and ready states
+               pct[index].running = 0;
+               pct[index].ready = 1;
+               pct[index].done = 0;
+
+               //Initialize wait variables
+               pct[index].r = 0;
+               pct[index].s = 0;
+
+               snprintf(message.str, sizeof(message), "OSS: Generating process with PID %ld and putting it in queue %d at time %d.%d\n",
+                                                                    pct[index].pid, pct[index].priority, timer->secs, timer->nanos);
+               fprintf(log, message.str);
+
+               //Confirm the child process execution
+               message.type = 1;
+               msgsnd(msgid, &message, sizeof(message), 0);
+               msgrcv(msgid, &message, sizeof(message), 2, 0);
                break;
-         }
-         //End of switch pid statement
+         } 
+         //End of switch statement
       }
+      //End of if statement
 
-      //Else If max number of children is reached
-      else {
-         for (i = 0; i < maxProc; i++) {
-            if (pct[i].used == 1) {
-               if (timer->secs >= pct[i].startSec && timer->nanos >= pct[i].startNS && pct[i].launched == 0) {
-                  message.type = (long)pct[i].pid;
-                  msgsnd(msgid, &message, sizeof(message), 0);
-                  msgrcv(msgid, &message, sizeof(message), 2, 0);
-               }
-            }
-         }
-         //Receive message and write to file
-         msgrcv(msgid, &message, sizeof(message), (long)getpid(), 0);
-         log = fopen(filename, "a");
-         fprintf(log, message.str);
-         fclose(log);
-
-         //Increment the timer 100 nanos and adjust
-         timer->nanos += 100;
-         while (timer->nanos >= 1000000000) {
-            timer->nanos -= 1000000000;
-            timer->secs++;
-         }
-
-         //Decrement the count
-         pid = wait(&status);
-         for (i = 0; i < maxProc; i++)
-            if ((long)pct[i].pid == (long)pid) {
-               pct[i].used = 0;
-               count--;
-               break;
-            }
-         //printf("%s: Process %ld finished(2). %d child processes running.\n", argv[0], (long)pid, count);
-      }
-      //End of if/else statement
-   }
-   //End of master while loop
-
-   //For any remaining messages
-   for (i = 0 ; i < count; i++) {
-      //Receive message and write to file
-      msgrcv(msgid, &message, sizeof(message), (long)getpid(), 0);
-      log = fopen(filename, "a");
-      fprintf(log, message.str);
-      fclose(log);
-     
-      //Increment the timer 100 nanos and adjust
-      timer->nanos += 100;
-      while (timer->nanos >= 1000000000) {
+         
+      //Increment timer for scheduling work
+      timer->nanos += rand()%9900 + 100;
+      while (timer->nanos > 1000000000) {
          timer->nanos -= 1000000000;
          timer->secs++;
       }
-   } 
+  
+      //Check blocked queue
+ 
+      //Schedule round robin queue
+      if (roundRobin[0] != 0) {
+         for (i = 0; i < maxProc; i++) {
+            if (pct[i].pid == roundRobin[0]) {
+               break;
+            }
+         }
+         pct[i].burst_time = quantum[0];
+         snprintf(message.str, sizeof(message), "OSS: Dispaching process with PID %ld from queue %d at time %d.%d\n",
+                                                                    pct[i].pid, pct[i].priority, timer->secs, timer->nanos);
+         fprintf(log, message.str);
+         message.type = (long)roundRobin[0];
+         msgsnd(msgid, &message, sizeof(message), 0);
+         msgrcv(msgid, &message, sizeof(message), (long)getpid(), 0);
+         if (pct[i].done == 1) {
+            waitpid(pct[i].pid, &status, 0);
+            snprintf(message.str, sizeof(message), "OSS: Process with PID %ld has finished at time %d.%d after running %d nanoseconds\n",
+                                                                    pct[i].pid, timer->secs, timer->nanos, pct[i].cpu_time);
+            fprintf(log, message.str);
+            roundRobin[0] = 0;
+            pct[i].ready = -1;
+            count--;
+         }
+         else if ( pct[i].ready = 0 ) {
+            snprintf(message.str, sizeof(message.str), "OSS: Process with PID %ld blocked at time, ran for %d nanoseconds\n",
+                                                                    pct[i].pid, timer->secs, timer->nanos, pct[index].burst_time);
+            fprintf(log, message.str);
+         }
+         else {
+            snprintf(message.str, sizeof(message), "OSS: Recieving that process with PID %ld ran for %d nanoseconds\n",
+                                                                    pct[i].pid, pct[i].burst_time );
+            fprintf(log, message.str);
+         }
+         long temp = roundRobin[0];
+         for ( i = 0; i < (maxProc-1); i++) {
+            roundRobin[i] = roundRobin[i+1];
+         }
+         roundRobin[maxProc-1] = 0;
+         for ( i = 0; i < maxProc; i++) {
+            if (roundRobin[i] == 0) {
+               roundRobin[i] = temp;
+               break;
+            }
+         }  
+      }
 
-   //Wait for all children to finish
+      //Schedule high-priority queue
+      else if (feedbck_1[0] != 0) {
+         for (i = 0; i < maxProc; i++) {
+            if (pct[i].pid == feedbck_1[0]) {
+               break;
+            }
+         }
+         pct[i].burst_time = quantum[1];
+         snprintf(message.str, sizeof(message), "OSS: Dispaching process with PID %ld from queue %d at time %d.%d\n",
+                                                                    pct[i].pid, pct[i].priority, timer->secs, timer->nanos);
+         fprintf(log, message.str);
+         message.type = (long)feedbck_1[0];
+         msgsnd(msgid, &message, sizeof(message), 0);
+         msgrcv(msgid, &message, sizeof(message), (long)getpid(), 0);
+         if (pct[i].done == 1) {
+            waitpid(pct[i].pid, &status, 0);
+            snprintf(message.str, sizeof(message), "OSS: Process with PID %ld has finished at time %d.%d after running %d nanoseconds\n",
+                                                                    pct[i].pid, timer->secs, timer->nanos, pct[i].cpu_time);
+            fprintf(log, message.str);
+            feedbck_1[0] = 0;
+            pct[i].ready = -1;
+            count--;
+         }
+         else if ( pct[i].ready = 0 ) {
+            pct[i].priority++;
+            snprintf(message.str, sizeof(message.str), "OSS: Process with PID %ld blocked at time, ran for %d nanoseconds\n",
+                                                                    pct[i].pid, timer->secs, timer->nanos, pct[index].burst_time);
+            fprintf(log, message.str);
+         }
+         else {
+            pct[i].priority++;
+            snprintf(message.str, sizeof(message), "OSS: Recieving that process with PID %ld ran for %d nanoseconds\n",
+                                                                    pct[i].pid, pct[i].burst_time );
+            fprintf(log, message.str);
+         }
+         long temp = feedbck_1[0];
+         for ( i = 0; i < (maxProc-1); i++) {
+            feedbck_1[i] = feedbck_1[i+1];
+         }
+         feedbck_1[maxProc-1] = 0;
+         for ( i = 0; i < maxProc; i++) {
+            if (feedbck_2[i] == 0) {
+               feedbck_2[i] = temp;
+               break;
+            }
+         }
+      }
+
+      //Schedule medium-priority queue
+      else if (feedbck_2[0] != 0) {
+         for (i = 0; i < maxProc; i++) {
+            if (pct[i].pid == feedbck_2[0]) {
+               break;
+            }
+         }
+         pct[i].burst_time = quantum[2];
+         snprintf(message.str, sizeof(message), "OSS: Dispaching process with PID %ld from queue %d at time %d.%d\n",
+                                                                    pct[i].pid, pct[i].priority, timer->secs, timer->nanos);
+         fprintf(log, message.str);
+         message.type = (long)feedbck_2[0];
+         msgsnd(msgid, &message, sizeof(message), 0);
+         msgrcv(msgid, &message, sizeof(message), (long)getpid(), 0);
+         if (pct[i].done == 1) {
+            waitpid(pct[i].pid, &status, 0);
+            snprintf(message.str, sizeof(message), "OSS: Process with PID %ld has finished at time %d.%d after running %d nanoseconds\n",
+                                                                    pct[i].pid, timer->secs, timer->nanos, pct[i].cpu_time);
+            fprintf(log, message.str);
+            feedbck_2[0] = 0;
+            pct[i].ready = -1;
+            count--;
+         }
+         else if ( pct[i].ready = 0 ) {
+            pct[i].priority++;
+            snprintf(message.str, sizeof(message.str), "OSS: Process with PID %ld blocked at time, ran for %d nanoseconds\n",
+                                                                    pct[i].pid, timer->secs, timer->nanos, pct[index].burst_time);
+            fprintf(log, message.str);
+         }
+         else {
+            pct[i].priority++;
+            snprintf(message.str, sizeof(message), "OSS: Recieving that process with PID %ld ran for %d nanoseconds\n",
+                                                                    pct[i].pid, pct[i].burst_time );
+            fprintf(log, message.str);
+         }
+         long temp = feedbck_2[0];
+         for ( i = 0; i < (maxProc-1); i++) {
+            feedbck_2[i] = feedbck_2[i+1];
+         }
+         feedbck_2[maxProc-1] = 0;
+         for ( i = 0; i < maxProc; i++) {
+            if (feedbck_3[i] == 0) {
+               feedbck_3[i] = temp;
+               break;
+            }
+         }
+      }
+
+      //Schedule low-priority queue
+      else if (feedbck_3[0] != 0) {
+         for (i = 0; i < maxProc; i++) {
+            if (pct[i].pid == feedbck_3[0]) {
+               break;
+            }
+         }
+         pct[i].burst_time = quantum[3];
+         snprintf(message.str, sizeof(message), "OSS: Dispaching process with PID %ld from queue %d at time %d.%d\n",
+                                                                    pct[i].pid, pct[i].priority, timer->secs, timer->nanos);
+         fprintf(log, message.str);
+         message.type = (long)feedbck_3[0];
+         msgsnd(msgid, &message, sizeof(message), 0);
+         msgrcv(msgid, &message, sizeof(message), (long)getpid(), 0);
+         if (pct[i].done == 1) {
+            waitpid(pct[i].pid, &status, 0);
+            snprintf(message.str, sizeof(message), "OSS: Process with PID %ld has finished at time %d.%d after running %d nanoseconds\n",
+                                                                    pct[i].pid, timer->secs, timer->nanos, pct[i].cpu_time);
+            fprintf(log, message.str);
+            feedbck_3[0] = 0;
+            pct[i].ready = -1;
+            count--;
+         }
+         else if ( pct[i].ready = 0 ) {
+            snprintf(message.str, sizeof(message.str), "OSS: Process with PID %ld blocked at time, ran for %d nanoseconds\n",
+                                                                    pct[i].pid, timer->secs, timer->nanos, pct[index].burst_time);
+            fprintf(log, message.str);
+         }
+         else {
+            snprintf(message.str, sizeof(message), "OSS: Recieving that process with PID %ld ran for %d nanoseconds\n",
+                                                                    pct[i].pid, pct[i].burst_time );
+            fprintf(log, message.str);
+         }
+         long temp = feedbck_3[0];
+         for ( i = 0; i < (maxProc-1); i++) {
+            feedbck_3[i] = feedbck_3[i+1];
+         }
+         feedbck_3[maxProc-1] = 0;
+         for ( i = 0; i < maxProc; i++) {
+            if (feedbck_3[i] == 0) {
+               feedbck_3[i] = temp;
+               break;
+            }
+         }
+      }
+   }
+   //End of master while loop
+
+   //Wait for all child processes to finish
    while ( (pid = wait(&status)) > 0) {
-      pct[i].used = 0;
       count--;
-      //printf("%s: Process %ld finished(3). %d child processes running.\n", argv[0], (long)pid, count);
+      printf("%s: Process %ld finished. %d child processes running.\n", argv[0], (long)pid, count);
    }
 
    //Report cause of termination
@@ -325,6 +503,9 @@ int main(int argc, char* argv[]) {
    shmctl(shmpid, IPC_RMID, NULL);
    msgctl(msgid, IPC_RMID, NULL);
 
+   //Close file
+   fclose(log);
+
    //End program
    return 0;
 }
@@ -342,8 +523,8 @@ void display_help(char* prog) {
            "\tTo run: ./oss (default values set)\n"
            "\tOptions:\n"
            "\t\t-h : help menu\n"
-           "\t\t-l [filename]: set the name of the produced log file (default is nesbitP3.log)\n"
-           "\t\t-t [integer]: set timeout in seconds (default is 3)\n"
+           "\t\t-l [filename]: set the name of the produced log file (default is nesbitP4.log)\n"
+           "\t\t-t [integer]: set timeout in real seconds (default is 3)\n"
            "\tExample: ./oss -l file.log -t 30\n", prog);
 }
 

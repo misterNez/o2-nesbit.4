@@ -53,64 +53,128 @@ int main(int argc, char* argv[]) {
    
    //Seed random generation
    srand(getpid());
+   int ran;
+   int r = 0;
+   int s = 0;
+   int p = 0;
 
-   //Set random simulated duration
-   int dur = rand()%1000000 + 1;
-
-   //Workload variables
-   int work;
-   int total = 0;
+   //Iteration variable
    int round = 0;
+
+   //Index variable
+   int index = atoi(argv[1]);
 
    //Variable used to flag termination
    int done = 0;
  
-   //Variable used to record start time 
+   //Variables used to record time
    int start;
+   int end;
 
    //Critical section loop
-   while (done == 0 && term == 0) {
+   while ( done == 0 && term == 0 ) {
 
-      //Receive message (using type 3)
-      msgrcv(msgid, &message, sizeof(message), 3, 0);
+      //Receive message from master
+      msgrcv(msgid, &message, sizeof(message), (long)pct[index].pid, 0);
 
       //Increment round
       round++;
       if (round == 1)
-         start = timer->secs*1000000000 + timer->nanos;   //Set the start time at round 1
+         start = timer->secs*1000000000 + timer->nanos;    //Set the start time at round 1
 
-      //Random amount of work
-      work = rand()%200 + 1;
+      //Small change of termination
+      ran = rand()%499 + 1;
+      if ( ran < 2 ) {
+         pct[index].burst_time = rand()%(pct[index].burst_time - 2) + 1;
 
-      //Adjust the work as needed
-      if ( work >= dur) {		//If work is greater than duration
-         work = dur;
-         done = 1;
+         if ( (pct[index].burst_time + pct[index].cpu_time) >= pct[index].duration) {
+            pct[index].burst_time = pct[index].duration - pct[index].cpu_time;
+         }
+
+         pct[index].cpu_time += pct[index].burst_time;
+         pct[index].done = 1;
+         timer->nanos += pct[index].burst_time;
+         while (timer->nanos > 1000000000) {
+            timer->nanos -= 1000000000;
+            timer->secs++;
+         }
+         end = timer->secs*1000000000 + timer->nanos;
+         int childNans = end - start;
+         int childSecs = 0;
+
+         while (childNans >= 1000000000) {
+            childNans -= childNans;
+            childSecs++;
+         }
+
+         pct[index].total_sec = childSecs;
+         pct[index].total_nano = childNans;
+         
+         //snprintf(message.str, sizeof(message.str), "OSS: Child PID %ld is terminating at time %d.%d after running for "
+                  //"%d.%d out of %d.%d because of random termination\n", 
+                  //pct[index].pid, timer->secs, timer->nanos, 0, pct[index].cpu_time, pct[index].total_sec, pct[index].total_nano);
+         
+         message.type = (long)getppid();
+         msgsnd(msgid, &message, sizeof(message), 0);
+         shmdt(timer);
+         shmdt(pct);
+         return -1;
       }
-      if ( (work + total) >= dur ) {   //If the total work is greater than or equal to duration
-         work = dur - total;
-         done = 1;
+
+      ran = rand()%99 + 1;
+      //Not blocked
+      if ( ran >= 20 ) {
+         if ( (pct[index].burst_time + pct[index].cpu_time) >= pct[index].duration) {
+            pct[index].burst_time = pct[index].duration - pct[index].cpu_time;
+            pct[index].done = 1;
+            //pct[index].cpu_time += pct[index].burst_time;
+            done = 1;
+         }
+         timer->nanos += pct[index].burst_time;
+         while (timer->nanos > 1000000000) {
+            timer->nanos -= 1000000000;
+            timer->secs++;
+         }
+         pct[index].cpu_time += pct[index].burst_time;
+         //snprintf(message.str, sizeof(message.str), "OSS: Child PID %ld ran for %d.%d\n", pct[index].pid, 0, pct[index].burst_time);
+
+         message.type = (long)getppid();
+         msgsnd(msgid, &message, sizeof(message), 0);
       }
+      //Blocked
+      else {
+         pct[index].ready = 0;
+         r = rand()%5;
+         s = rand()%1000;
+         pct[index].burst_time = rand()%(pct[index].burst_time - 2) + 1;
+         if ( (pct[index].burst_time + pct[index].cpu_time) >= pct[index].duration) {
+            pct[index].burst_time = pct[index].duration - pct[index].cpu_time;
+            pct[index].done = 1;
+            //pct[index].cpu_time += pct[index].burst_time;
+            done = 1;
+         }
+         timer->nanos += pct[index].burst_time;
+         while (timer->nanos > 1000000000) {
+            timer->nanos -= 1000000000;
+            timer->secs++;
+         }
+         pct[index].cpu_time += pct[index].burst_time;
+         pct[index].s = r + timer->secs;
+         pct[index].s = s + timer->nanos;
+         while (pct[index].s >= 1000000000) {
+            pct[index].s -= 1000000000;
+            pct[index].r++;
+         }
+         //snprintf(message.str, sizeof(message.str), "OSS: Child PID %ld blocked at time %d.%d for %d.%d, ran for %d.%d\n",
+            //pct[index].pid, timer->secs, timer->nanos, r, s, 0, pct[index].burst_time);
 
-      //Incrememnt timer
-      timer->nanos += work;
-      total += work;
-
-      //Adjust the timer
-      while (timer->nanos >= 1000000000) {
-         timer->nanos -= 1000000000;
-         timer->secs++;
-      }
-
-      //Cede to another procress if not finished
-      if ( done == 0) {
-          message.type = 3;					//Send message of type 1
-          msgsnd(msgid, &message, sizeof(message), 0);
+         message.type = (long)getppid();
+         msgsnd(msgid, &message, sizeof(message), 0);
       }
    }
 
    //Calculate the runtime
-   int end = timer->secs*1000000000 + timer->nanos;
+   end = timer->secs*1000000000 + timer->nanos;
    int childNans = end - start;
    int childSecs = 0;
 
@@ -119,14 +183,17 @@ int main(int argc, char* argv[]) {
       childNans -= childNans;
       childSecs++;
    }
+
+   pct[index].total_sec = childSecs;
+   pct[index].total_nano = childNans;
  
    //Create the log mesage
-   snprintf(message.str, sizeof(message.str), "Master: Child PID %ld is terminating at my time %d.%d because it reached %d.%d,"
-                      " which lived for time %d.%d\n", (long)getpid(), timer->secs, timer->nanos, 0, dur, childSecs, childNans);
+   //snprintf(message.str, sizeof(message.str), "OSS: Child PID %ld is terminating at time %d.%d because it reached %d.%d, lived for time %d.%d\n", 
+            //pct[index].pid, timer->secs, timer->nanos, 0, pct[index].duration, pct[index].total_sec, pct[index].total_nano);
 
    //Send message(to parent)
-   message.type = (long)getppid();
-   msgsnd(msgid, &message, sizeof(message), 0);
+   //message.type = (long)getppid();
+   //msgsnd(msgid, &message, sizeof(message), 0);
 
    //Detach from shared memory
    shmdt(timer);
