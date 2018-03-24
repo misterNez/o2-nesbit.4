@@ -84,80 +84,97 @@ int main(int argc, char* argv[]) {
 
       //Small change of termination
       ran = rand()%499 + 1;
-      if ( ran < 2 ) {
+      if ( ran < 5 ) {
+         //Determine burst time
          pct[index].burst_time = rand()%(pct[index].burst_time - 2) + 1;
-
          if ( (pct[index].burst_time + pct[index].cpu_time) >= pct[index].duration) {
             pct[index].burst_time = pct[index].duration - pct[index].cpu_time;
          }
 
+         //Update process control block
          pct[index].cpu_time += pct[index].burst_time;
          pct[index].done = 1;
+
+         //Update timer
          timer->nanos += pct[index].burst_time;
          while (timer->nanos > 1000000000) {
             timer->nanos -= 1000000000;
             timer->secs++;
          }
+
+         //Get run time
          end = timer->secs*1000000000 + timer->nanos;
          int childNans = end - start;
          int childSecs = 0;
-
          while (childNans >= 1000000000) {
             childNans -= childNans;
             childSecs++;
          }
-
          pct[index].total_sec = childSecs;
          pct[index].total_nano = childNans;
          
-         //snprintf(message.str, sizeof(message.str), "OSS: Child PID %ld is terminating at time %d.%d after running for "
-                  //"%d.%d out of %d.%d because of random termination\n", 
-                  //pct[index].pid, timer->secs, timer->nanos, 0, pct[index].cpu_time, pct[index].total_sec, pct[index].total_nano);
-         
+         //Send to parent
          message.type = (long)getppid();
          msgsnd(msgid, &message, sizeof(message), 0);
+
+         //Detach
          shmdt(timer);
          shmdt(pct);
          return -1;
       }
 
+      //Determine if process get blocked
       ran = rand()%99 + 1;
       //Not blocked
       if ( ran >= 20 ) {
+         //Check if done
          if ( (pct[index].burst_time + pct[index].cpu_time) >= pct[index].duration) {
             pct[index].burst_time = pct[index].duration - pct[index].cpu_time;
             pct[index].done = 1;
-            //pct[index].cpu_time += pct[index].burst_time;
             done = 1;
          }
+ 
+         //Update timer
          timer->nanos += pct[index].burst_time;
          while (timer->nanos > 1000000000) {
             timer->nanos -= 1000000000;
             timer->secs++;
          }
-         pct[index].cpu_time += pct[index].burst_time;
-         //snprintf(message.str, sizeof(message.str), "OSS: Child PID %ld ran for %d.%d\n", pct[index].pid, 0, pct[index].burst_time);
 
+         //Update process control block
+         pct[index].cpu_time += pct[index].burst_time;
+
+         //Send to parent
          message.type = (long)getppid();
          msgsnd(msgid, &message, sizeof(message), 0);
       }
       //Blocked
       else {
+         //Set the read trait to 0
          pct[index].ready = 0;
+
+         //Determine blocked time
          r = rand()%5;
          s = rand()%1000;
+
+         //Determine burst time
          pct[index].burst_time = rand()%(pct[index].burst_time - 2) + 1;
+
+         //Check if done
          if ( (pct[index].burst_time + pct[index].cpu_time) >= pct[index].duration) {
             pct[index].burst_time = pct[index].duration - pct[index].cpu_time;
             pct[index].done = 1;
-            //pct[index].cpu_time += pct[index].burst_time;
             done = 1;
          }
+
+         //Adjust timer
          timer->nanos += pct[index].burst_time;
          while (timer->nanos > 1000000000) {
             timer->nanos -= 1000000000;
             timer->secs++;
          }
+
+         //Update process control block
          pct[index].cpu_time += pct[index].burst_time;
          pct[index].s = r + timer->secs;
          pct[index].s = s + timer->nanos;
@@ -165,9 +182,8 @@ int main(int argc, char* argv[]) {
             pct[index].s -= 1000000000;
             pct[index].r++;
          }
-         //snprintf(message.str, sizeof(message.str), "OSS: Child PID %ld blocked at time %d.%d for %d.%d, ran for %d.%d\n",
-            //pct[index].pid, timer->secs, timer->nanos, r, s, 0, pct[index].burst_time);
 
+         //Send message to parent
          message.type = (long)getppid();
          msgsnd(msgid, &message, sizeof(message), 0);
       }
@@ -184,17 +200,10 @@ int main(int argc, char* argv[]) {
       childSecs++;
    }
 
+   //Set the total run time
    pct[index].total_sec = childSecs;
    pct[index].total_nano = childNans;
  
-   //Create the log mesage
-   //snprintf(message.str, sizeof(message.str), "OSS: Child PID %ld is terminating at time %d.%d because it reached %d.%d, lived for time %d.%d\n", 
-            //pct[index].pid, timer->secs, timer->nanos, 0, pct[index].duration, pct[index].total_sec, pct[index].total_nano);
-
-   //Send message(to parent)
-   //message.type = (long)getppid();
-   //msgsnd(msgid, &message, sizeof(message), 0);
-
    //Detach from shared memory
    shmdt(timer);
    shmdt(pct);
